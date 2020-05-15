@@ -1,0 +1,418 @@
+\documentclass[11pt,twocolumn]{asaproc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{url}
+\usepackage{booktabs}
+%\usepackage{mathtime}
+
+%%UNCOMMENT following line if you have package
+\usepackage{times}
+
+\title{Stat 207 Midterm}
+
+\author{Jordan Berninger\thanks{University of California, Santa Cruz. Baskin School of Engineering. Department of Statistics.}}
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+
+In this paper, we analyze data on COVID-19 county-level cases and deaths in California. A central motivation is to evaluate how infection and mortality rates vary across counties, especially as it relates to population. We fit three different hierarchical Bayesian models to this data set. 
+Model 1 models the number of cases as a Poisson random variable and each county is assigned its own infection rate variable. Posterior inference from Model 1 indicates that the posterior mean infection rates are similar across all counties and posterior variance of infection rate decreases with a county's population size. 
+Model 2 models the number of deaths in each county as a Binomial distribution and each county is assigned its own mortality rate, which are generated from a common Beta distribution. Model 2 concludes that there is significant variance in the mortality rates across counties. 
+Model 3 is a hybrid model - the number of cases is modelled as a Poisson distribution and the number of deaths is modeled as a Binomial distribution (where the size is the number of cases). This model assigns a parameter for each county that is associated with both the infection and mortality rates.  This model concludes that there is significant variance across counties - the smaller the population size, the larger the parameter estimate and the parameter variance.
+
+\begin{keywords}
+COVID-19, Hierarchical Modeling, Bayesian Inference, MCMC, Gibbs Sampling, Metropolis-Hastings, Rejection Sampling
+\end{keywords}
+\end{abstract}
+
+
+\section{Introduction}
+
+Our data set includes the number of deaths ($y_i$), the number of cases ($n_i$), and the total population, in thousands, ($c_i$) in the state, for each of the 58 counties in California. This data set was collected on April 13th, 2020. Our objective in this analysis is to fit three different hierarchical models, and to compare the estimated death rate (deaths/cases), infection rate (cases/population), and death count of the models and note any substantial variation across counties.
+
+In Section \ref{eda}, we visualize the data set and note the significant diversity across counties in California. Since this is our second analysis with the second data set, our exploratory data analysis will focus on the number of cases per county, as it relates to the county's population.
+
+In Section \ref{models} we introduce three different hierarchical Bayesian models. For each model, we state the structure and derive the necessary posterior distributions. We then implement Monte Carlo Markov Chain sampling on each model, draw inference on the mortality and infection rates. 
+
+In Section \ref{comp} we compare the 3 models, with particular emphasis on the two new models introduced in this analysis - Model 1 and Model 3. This analysis indicates that there is substantial variation in the infection rates across counties. We also compare the posterior estimated number of deaths from each model, and consider the impact of hyper-parameter settings.
+
+In Section \ref{conc}, we dissect the variation in infection rate across counties and note the differences across models. Section \ref{conc} also includes ideas for further research and provides a link to all the code from this analysis.
+
+
+\subsection{Exploratory Data Analysis\label{eda}}
+
+This is the second analysis on the same data set so this exploratory data analysis will be more focused and, hopefully, not repetitive. In this paper, we are primarily concerned with the variability in number of cases, especially as it relates to county population. One motivation for this angle of analysis is the COVID-19 virus transmits with more ease through denser populations. 
+
+Figure \ref{sc1} shows the number of cases on the log-scale against population and shows that several counties have an extremely low number of cases. In fact, more than half the counties have fewer than 50 cases. This is extremely important to note - models that treat all of the counties equally may dilute the significance of the much larger sample sizes of the larger counties. Figure \ref{sc1} also highlights Los Angeles County as an extreme outlier in terms of population and the number of cases. Generally speaking, the number of cases increases with population.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{eda_sc11.png}
+\caption{log(Cases) by County}\label{sc1}
+\end{figure}
+
+Figure \ref{hist1} clearly shows there is a skewed distribution for the infection rate. This supports the modeling decision to fit an unique infection rate parameter for each county, since there is significant variance. The vertical red line in Figure \ref{hist1} denotes the average infection rate across all the counties. The far right outlier in Figure \ref{hist1} is Mono County, the 5th smallest in California, with 23 reported cases and a population below 15k.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{eda_hist2.png}
+\caption{Infection Rate by County}\label{hist1}
+\end{figure}
+
+Figure \ref{eda_sc3} shows that infection rate generally increases with population, the main exception being the the aforementioned Mono County. This plot motivates fitting a different infection rate for each county, since there is significant variance.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{eda_scatter_new1.png}
+\caption{Population vs Infection Rate}\label{eda_sc3}
+\end{figure}
+
+Figure \ref{edasc4} indicates that mortality rate does not appear to increase with population. In fact, death rate appears to be random with respect to population. Figures \ref{eda_sc3} and \ref{edasc4} highlight a tension in Model 3, where we are fitting one parameter for both the mortality and infection rates in each county. This parameter may be pulled in different directions by different counties and therefore may not be the most appropriate model structure.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{eda_scatter_new2.png}
+\caption{Population vs Mortality Rate}\label{edasc4}
+\end{figure}
+
+Figure \ref{map1} shows the infection rate as the color on each county. The yellow county is Mono County, the aforementioned outlier. It is worth noting the lighter colors (denoting higher infection rates) on the dense and populous counties of San Mateo, Santa Clara, Los Angeles and Santa Barbara. Furthermore, Figure \ref{map1} shows a very low infection rate in the remote and rural norther counties.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{eda_map2.png}
+\caption{Infection Rate by County}\label{map1}
+\end{figure}
+
+\section{Models\label{models}}
+
+\subsection{Model 1: Poisson-Gamma Hierarchical Model}
+
+The first model we investigate models the number of cases in each county as a Poisson distribution with mean $\lambda_i c_i$, meaning each county has its own infection rate $\lambda_i$ multiplied by its population, in thousands, $c_i$. We assume that all of these infection rates are generated from the same distribution, a Gamma distribution. The parameters for this Gamma distribution are assumed to be distributed as independent Gamma distribution, so this is a nice conjugate model. Formally, Model 1 structured as:
+
+$n_i \sim Poisson(\lambda_i c_i)$
+
+$\lambda_i \sim \Gamma(\alpha,\beta)$
+
+$p(\alpha,\beta)=\Gamma(\alpha|a_1,b_1)\Gamma(\beta|a_2,b_2)$.
+
+To perform inference with this model we need the joint posterior distribution of all the parameters. We have:
+
+\begin{equation} \label{eq2}
+\begin{split}
+p(\vec{\lambda}, \alpha, \beta &| \vec{n})  \propto\\
+&f(\vec{n}|\vec{\lambda},\alpha,\beta)*f(\vec{\lambda}|\alpha,\beta)*p(\alpha,\beta)\\
+&\propto \Pi_{i=1}^{58}f(n_i |\lambda_i \alpha, \beta)\\
+&*\Pi_{i=1}^{58}f(\lambda_i |\alpha, \beta)*p(\alpha,\beta)\\
+&\propto \Pi_{i=1}^{58}\frac{(\lambda_i c_i)^{n_i}exp(-\lambda_i c_i)}{n_i!}\\
+&* \Pi_{i=1}^{58}\frac{\beta^{\alpha}}{\Gamma(\alpha)}exp(-\beta\lambda_i)\lambda_i^{\alpha-1}\\
+&*p(\alpha,\beta)\\
+&\propto \frac{\beta^{n\alpha}}{\Gamma(\alpha)^n}\Pi_{i=1}^{58}exp(-\lambda_i(c_i+\beta))\\
+&*\lambda_i^{n_i+\alpha-1}p(\alpha,\beta)\\
+&\propto \frac{\beta^{n\alpha}}{\Gamma(\alpha)^n}\Pi_{i=1}^{58}exp(-\lambda_i(c_i+\beta))\\
+&*\lambda_i^{n_i+\alpha-1}\alpha^{a_1-1}exp(-b_1\alpha)\\
+&*\beta^{a_2-1}exp(-b_2\beta)
+\end{split}
+\end{equation}
+
+Now, from this joint posterior distribution, we need to derive the conditional posterior distributions necessary for MCMC sampling. One by one, we focus a parameter of interest and isolate all terms in the joint posterior related to this parameter or the data. The priors are conjugate, so we have familiar closed forms for all the distributions of interest. 
+
+Factorizing Equation \ref{eq2} leaves us with the following conditional distributions:
+
+$\lambda_i|. \sim \Gamma(n_i+\alpha,c_i+\beta)$
+
+$\beta|. \sim \Gamma(n\alpha+a_2, b_2 + \sum\lambda_i)$
+
+$\alpha|. \sim \frac{\beta^{n\alpha}}{\Gamma(\alpha)^n}\Pi^{58}\lambda_i^{\alpha}\alpha^{a_1-1}exp(-b_1\alpha)$
+
+These distributions allow us to sample from a MCMC and draw inference on the parameters. Clearly, the conditional posterior distributions of $\vec{\lambda}$ and $\beta$ can be sampled from directly, while the conditional posterior distribution for $\alpha$ must be sampled from using a Metropolis Hastings step. Accordingly, our MCMC for this model has three steps - two Gibbs sampling steps using $rgamma()$ and one Metropolis Hastings step for $\alpha$. It is necessary to choose our hyper-parameters $(a_1,b_1,a_2,b_2)$ before we run the model
+
+\subsubsection{Hyper Parameter Tuning}
+
+For this model, we were instructed to set the hyper parameters of this model so to be compatible with the assumption that, for a given county, the mean number of cases is equal to 20$\%$ of the population. This is an Empirical Bayes approach, where we use domain knowledge to inform the prior distribution. Since we are dealing with Gamma priors here, this is fairly easy. This means we want to calibrate the parameters so that
+
+$0.20 \approx E(\lambda_i) = \frac{\alpha}{\beta} \rightarrow \beta \approx 5\alpha$
+
+Obviously, there is no unique solution to this, so we can start with $\alpha=2, \beta=10$
+
+$2 \approx E(\alpha) = \frac{a_1}{b_1} \rightarrow a_1 \approx 2b_1$, and,
+
+$10 \approx E(\beta) = \frac{a_1}{b_1} \rightarrow a_2 \approx 10b_2$.
+
+Thus, we start with the hyper parameters $a_1=2,b_1=1,b_2=1,a_2=10$, but any scaled version will also satisfy our condition. Increasing the hyper parameter values will decrease the variance in the prior distribution, since $Var(\Gamma(a,b)) = \frac{a}{b^2}$.
+
+\subsubsection{MCMC}
+
+We implement a Metropolis within Gibbs MCMC to sample from the joint posterior distribution for Model 1. We sample directly from the conditional posterior distributions of $\vec{\lambda}$ and $\beta$ using $rgamma()$ and we sample from the full conditional log posterior distribution of $\alpha$ using a Metropolis Hastings step with a Gaussian proposal distribution. We use the log conditional posterior for the Metropolis Hasting step because that is more computationally friendly. Running the Metropolis within Gibbs for 20k iteration with a 10k burn-in produces the convergent trace plots of $\alpha$ and $\beta$ in Figure \ref{mcmc1}. 
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{mcmc_m1_hyper_trace.png}
+\caption{Model 1 $\alpha, \beta$ Trace Plot}\label{mcmc1}
+\end{figure}
+
+
+Figure \ref{mcmc4} shows the post-burn-in distributions of the values of $log(\lambda_i)$, the infection rate for each county from the original set of hyper parameters ($a_1=2,b_1=1,b_2=1,a_2=10$). The log-scale is easier to analyze than the original units. Figure \ref{mcmc4} shows that each $\lambda_i$ has a skewed distribution, all $\lambda_i$ have similar posterior means, and that the smaller counties (higher county indices) have more variance in there $\lambda_i$ posterior distributions.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{mcmc_log_lambda_box1.png}
+\caption{MCMC $log(\lambda_i)$ Distributions - More Informative Hyper Parameters}\label{mcmc4}
+\end{figure}
+
+To evaluate the influence of the hyper-parameters, the MCMC was run again, the same way, except with the less informative set of hyper-parameters - ($a_1=0.002,b_1=0.001,b_2=0.001,a_2=0.01$). Figure \ref{mcmc5} shows the post-burn-in distributions of $log(\lambda_i)$ and is not discernibly different from \ref{mcmc4} indicating the weak influence of hyper-parameters in this model.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{mcmc_m1_vague_2.png}
+\caption{MCMC $log(\lambda_i)$ Distributions - Less Informative Hyper Parameters}\label{mcmc5}
+\end{figure}
+
+An important diagnostic for a MCMC is to check the ACF plot for significant auto-correlations in the chains, this was not an issue with this model. In order to save space for more important work, we do not show the convergent $\lambda_i$ trace plots or ACFs.
+
+\subsubsection{Posterior Predictive Distributions}
+
+We can use the posterior distributions of Model 1 to estimate the number of cases in each county. However, Model 1 does not provide a structure for estimating the number of deaths. Figure \ref{poispost1} shows the the estimated number of cases increases with population size, since the counties are roughly ordered from largest to smallest. This model predicts significant variance in the number of cases across counties.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{m1_posterior_county_cases_0515.png}
+\caption{Model 1 : Posterior Estimated Cases by County}\label{poispost1}
+\end{figure}
+
+Figure \ref{poispost2} shows the predictive distribution for the number of cases statewide, the mean predicted number of cases statewide is nearly 19k.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{m1_post_est_cases_051502.png}
+\caption{Model 1 : Posterior Estimated Statewide Cases}\label{poispost2}
+\end{figure}
+
+
+\subsection{Model 2: Binomial Beta Hierarchical Model\label{model2}}
+
+We return to a model from our previous analysis for comparison. Recall the following hierarchical model:
+
+$y_i \sim Binom(n_i, \theta_i),$
+
+$\theta_i \sim Beta(\mu\tau, (1-\mu)\tau),$
+
+$p(\mu, \tau) = \big(\mu(1-\mu)(1+\tau)^2 \big)^{-1}$.
+
+This model posits that the death count follows a binomial distribution where the size is the number of cases and each count has its own mortality rate, $\theta_i$ which are generated from a common distribution. We see a prior on this distribution so it can adapt to the data. Our first step for this model is to determine the joint posterior distribution $p(\vec{\theta}, \mu, \tau | \vec{y})$. We have:
+
+\begin{equation} \label{eq3}
+\begin{split}
+p(\vec{\theta}, \mu, \tau &| \vec{y})  =\\
+&\Pi_{i=1}^{58}p(\theta_i | \mu, \tau) \\
+&*\Pi_{i=1}^{58}p(y_i|\theta_i,\mu,\tau)p(\mu, \tau)\\
+&= \dots \\
+&=\Pi^{58}\Big(\binom{n_i}{y_i}\theta_i^{n_i+\mu*\tau-1} \\
+&(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\Big)\\
+&*Be(\mu\tau,\tau(1-\mu)^{-58}\\
+&*(\mu(1-\mu)(1+\tau^2))^{-1}
+\end{split}
+\end{equation}
+
+Now that we have the joint posterior distribution, we need to determine the conditional posterior distribution $p(\mu, \tau|\vec{y})$ and  $p(\theta | \mu, \tau, \vec{y})$ so we can sample from the joint posterior distribution. From there, we can make inference on the number of deaths. To get the conditional posterior distributions, we need to take all the terms that are related to the given parameters and the data. This gives us:
+
+
+\begin{equation} \label{eq15}
+\begin{split}
+p(\vec{\theta}|.)  &=\\
+&\Pi^{58}\Big(\binom{n_i}{y_i}\theta_i^{n_i+\mu*\tau-1} \\
+&(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\Big)\\
+\end{split}
+\end{equation}
+
+And for $\mu, \tau$, we get the following joint conditional posterior distribution. Since $\mu$ and $\tau$ are deeply intertwined, it does not make sense to try and separate them.
+
+\begin{equation} \label{eq=16}
+\begin{split}
+p(\mu, \tau|.)  &=\\
+&\Pi^{58}\Big(\binom{n_i}{y_i}\theta_i^{n_i+\mu*\tau-1} \\
+&(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\Big)\\
+&*Be(\mu*\tau,\tau(1-\mu)^{-58}\\
+&*(\mu(1-\mu)(1+\tau^2))^{-1}
+\end{split}
+\end{equation}
+
+We note that we cannot directly sample from either of these conditional posteriors distribution. Accordingly, we follow a similar Rejection Sampling procedure - we make the same transformation of $(\mu, \tau)$ to $(\eta=logit^{-1}(\mu), K=exp(\tau))$, including a Jacobian term in the new joint posterior distribution. Again, we find the posterior mode and an approximate co-variance matrix through a Laplace approximation, feeding the posterior mean and co-variance matrix to a 2-dimensional $t_{df=4}$ distribution. Our accepted samples of $(\eta, K)$ are seen as the dots in Figure \ref{m3post}.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m2_rejection_2.png}
+\caption{Rejection Sampling Model 2 (Transformed Variables)}\label{m3post}
+\end{figure}
+
+After we convert $(\eta, K)$ back to $(\mu, \tau)$ and can use these to sample $\theta_i$ using Metropolis Hastings with a random walk proposal distribution and equation \ref{eq15}. 
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{model2_county_thetas_1515.png}
+\caption{Model 2 : Posterior Distribution of $\theta_i$}\label{m2newtheta}
+\end{figure}
+
+The predicted number of deaths from Model 2 are quite grim, as seen in Figure \ref{m2postdead}, with a mean posterior number of deaths slightly over 200K. However, this model doesn't estimate the infection rate, so we assume a flat $20\%$ in this prediction.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.30]{m2_posterior_est_deaths_0515.png}
+\caption{Model 2 : Posterior Predicted Statewide Deaths}\label{m2postdead}
+\end{figure}
+
+\subsection{Model 3 : Binomial-Poisson Hierarchical Model\label{model3}}
+
+We now explore a model that assigns a parameter for each county, $\theta_i$ that is related to both the infection and mortality rates. We define Model 3 with the following hierarchical distributions:
+
+$y_i \sim Binom(n_i, \theta_i)$
+
+$n_i \sim Pois(\lambda\theta_i c_i)$
+
+$\theta_i \sim Beta(\mu\tau, (1-\mu)\tau)$
+
+$\lambda \sim \Gamma(a,b)$
+
+$p(\mu,\tau) = (\mu(1-\mu)(1+\tau^2))^{-1}$
+
+This model stipulates that the number of deaths in each county follows an independent binomial distribution, with its own parameter, $\theta_i$. Furthermore, we assume that the number of cases, $n_i$ in each county generated independently from a Poisson distribution, with an individual parameter, $\theta_i$, and a constant infection rate factor shared by all counties, $\lambda$. The infection parameter shared by all counties, $\lambda$ follows a Gamma distribution, whose hyper parameters are set as constants and whose influence is evaluated later in this section.
+
+It is important to note the role of $\theta$ in this model. Each county has its own $\theta_i$ and this parameter is associated with both the death and infection rates in the county. In this model, we are assuming that there is some underlying relationship between the infection rate and death rate. One justification for this assumption is that counties only begin widespread testing once they start experiencing deaths. However, recall that in Exploratory Data Analysis, Figures \ref{eda_sc3} and \ref{edasc4} showed that there is a tension between mortality and infection rates.
+
+Our objective is to develop a MCMC and perform inference on the posterior distributions of this mortality / infection rate $\theta_i$ and the shared infection rate $\lambda_i$. It is important to note that, as defined, $\theta_i \in (0,1)$ and $\lambda > 0$, so we will have to introduce transformations in order to sample from their distributions.
+
+
+\subsubsection{Posterior Distributions}
+
+The first step in MCMC sampling is to determine the joint posterior distribution. For Model 3, we have:
+
+\begin{equation} 
+\begin{split}
+p(\vec{\theta}, \lambda, & a, b, \mu, \tau | \vec{n},\vec{n},\vec{c}) \\
+&=f(\vec{y}|\vec{n},\vec{\theta})*f(\vec{n}|\lambda,\vec{\theta},\vec{c})\\
+&*p(\vec{\theta}|\mu,\tau)*p(\mu,\tau)*p(\lambda)\\
+&=\Pi^{58}Binom(y_i|n_i,\theta_i)\\
+&*\Pi^{58}Pois(n_i|\lambda\theta_i c_i)\\
+&*\Pi^{58}Beta(\theta_i|\mu\tau,\tau(1-\mu))\\
+&*p(\mu,\tau)p(\lambda)\\
+&= \dots \\
+&= \Pi^{58}\Big( \binom{n_i}{y_i}\theta_i^{y_i+\mu\tau}\\
+&*(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\\
+&*(\lambdac_i)^{n_i}(n_i!)^{-1}exp(-\lambda\theta_ic_i)\Big)\\
+&*Be(\mu\tau,\tau(1-\mu))^{-n} \\
+&*(\mu(1-\mu)(1+\tau)^2)^{-1}\\
+&*b^a\Gamma(a)^{-1}\lambda^{n+a-1} 
+\end{split}
+\end{equation}
+
+From this joint posterior distribution, we want to isolate the full conditional distribution for the model parameters, so we can construct a MCMC and explore the joint posterior distribution. This is not a conjugate model, however $\lambda$ does have a conjugate posterior distribution, since it is not involved with the binomial nor beta distributions. We have:
+
+$\lambda|. \sim \Gamma(n+a,b+\sum^{n}\theta_ic_i)$
+
+The next step is to get conditional posterior distributions for $\vec{\theta}, \mu, \tau$. None of these distributions can be sampled from directly, but there are several sampling methods we can choose from. We will use Metropolis Hastings on the joint distribution of $\mu, \tau$ and another Metropolis Hastings step to sample from the distribution of $\vec{\theta}$. A main motivation to using Metropolis Hastings here is that it doesn't require the conditional posterior distributions to have proportionality constants, since we are comparing the current parameter value to one generated from a proposal distribution. This makes things easier to code. The conditional posterior distribution for each county's infection / death rate related parameter is given by:
+
+\begin{equation}
+\begin{split}
+p(\vec{\theta}|.) &\propto  \\
+&\Pi^{58}\Big( \binom{n_i}{y_i}\theta_i^{y_i+\mu\tau}\\
+&*(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\\
+&*(\lambda c_i)^{n_i}(n_i!)^{-1}exp(-\lambda\theta_ic_i)\Big)\\
+\end{split}
+\end{equation}
+
+There might be some advantage to isolating individual conditional distributions for $\mu$ and $\tau$, however, since they are deeply intertwined in this model, it makes sense to determine their joint posterior conditional distribution, which we will sample from using Metropolis Hastings. This gives us:
+
+\begin{equation}
+\begin{split}
+p(\mu,\tau|.) &\propto  \\
+&\Pi^{58}\Big(\binom{n_i}{y_i} \theta_i^{y_i+\mu\tau}\\
+&*(1-\theta_i)^{n_i-y_i+\tau(1-\mu)-1}\\
+&*(\lambdac_i)^{n_i}(n_i!)^{-1}exp(-\lambda\theta_ic_i)\\
+&*Be(\mu\tau,\tau(1-\mu))^{-1}\Big) \\
+&*(\mu(1-\mu)(1+\tau)^2)^{-1}\\
+\end{split}
+\end{equation}
+
+\subsubsection{Running the MCMC}
+
+For Model 3, we implement a three stage MCMC - first, we sample directly from the conditional posterior of $\lambda$ using $rgamma()$, second, we sample from the joint conditional log posterior of $\mu,\tau$ using Metropolis Hastings and a random walk proposal, third, we sample from the joint conditional log posterior of $\vec{\theta_i}$ using a random walk proposal centered on the current value. We use the $logit()$ function to transform our our variables $\mu, \theta_i$ to the real line, since their un-transformed values must live in the interval $(0,1)$ and this is not ideal for sampling. This transformation necessitates a Jacobian term to be included in the log-posterior. The MCMC ran for 20k iterations with a 10k iteration burn-in. Several MCMCs were run to ensure that the $\theta_i$ values converge to the same, respective places across iterations.
+
+Figure \ref{m3paramstrace} shows that the chain of the hyper-parameters $\lambda,\mu,\tau$ all converge and do not get stuck at any given value.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{model3_mcmc_param_trace_new.png}
+\caption{Model 3 : $\lambda,\alpha,\beta$ Trace Plots}\label{m3paramstrace}
+\end{figure}
+
+In Model 3, $\lambda$ can be interpreted as the baseline infection rate across all counties, given it's role in the Poisson distribution. The posterior sample mean of $\lambda = 0.05$, representing a statewide baseline infection rate of $5\%$, and $\theta_i$ values partially represent each county's deviation from this baseline.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{m3_post_lambda_hist_0515.png}
+\caption{Model 3 : $\lambda$ Posterior Sample}\label{m3paramstrace}
+\end{figure}
+
+Again, we note the dual role of $\theta_i$ in Model 3 - it represents each county's mortality rate and the county's deviation from the baseline infection rate. Figure \ref{m3paramstrace2} shows the posterior MCMC sample of $\theta_i$. The larger counties, with lower county indices, are fitted with very low values of $\theta$, representing a low mortality rate, and a lower than average infection rate. Some of the smaller counties are fitted with larger values of $\theta$ with higher variance.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{m3_mcmc_theta_new.png}
+\caption{Model 3 : $\theta_i$ MCMC Samples (post burn-in)}\label{m3paramstrace2}
+\end{figure}
+
+\subsubsection{Posterior Predictive Distribution}
+
+Model 3 has rather conservative posterior predictive estimtats for the number of cases and deaths. Figure \ref{m3pred1} shows the posterior samples for the number of cases and deaths statewide. The posterior predictive average is 63K cases and 11K deaths. As of May 15th, the CDC is reports 71K confirmed cases and 3K confirmed deaths. This weakens my confidence in Model 3 seeing as how it has underestimated the number of cases.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{m3_post_pred_0515.png}
+\caption{Model 3 : Posterior Predicted Statewide Cases and Deaths}\label{m3pred1}
+\end{figure}
+
+
+\subsubsection{Influence of Hyper Parameters}
+
+The MCMC for Model 3 was ran with several sets of hyper-parameters $(a,b)$. These sets included $(a=0.001,b=0.001)$, $(a=1,b=1)$, $(a=1,b=5)$ and $(a=5,b=1)$. In each case, the $\lambda$ converged to approximately the same value and the MCMC sample distribution of $\theta_i$ always looked similar to that of Figure \ref{m3paramstrace2}. This indicates that $(a,b)$ have a very weak impact on Model 3.
+
+\section{Model Comparison\label{comp}}
+
+We are explicitly interested in comparing Models 1 and 3, the two new models introduced in this analysis. The posterior predicted number of cases statewide from these two models are compared in Figure \ref{m1m3comp}. The sample mean is represented by the red lines and the $95\%$ credible interval limits are denoted in blue. Unfortunately, both of these models drastically underestimate the current number of cases in California.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.25]{model_comp_0515.png}
+\caption{Comparison of Case Count Prediction}\label{m1m3comp}
+\end{figure}
+
+Model 1 and Model 3 differ in the parameters they estimate as well. Recall that Figure \ref{mcmc5} showed the minimal variance in the $\lambda_i$ values across counties, while Figure \ref{m2newtheta} showed significant variance in the $\theta_i$ values across counties.
+
+
+\section{Conclusions\label{conc}}
+
+In Model 1 and Model 3, we investigated the influence of the respective hyper-parameters. In both models, we saw that changes in the range and specificity of the hyper-parameters did not impact the convergence of the MCMCs, estimates of the model's other parameters, or the posterior predictive inference. We conclude that in Model 1 and Model 3, the hyper-parameters are not particularly influential.
+
+One objective was to compare the inference on mortality rates across counties. Model 1 is not structured for this. Model 2 concludes that some counties have very low mortality rates, these are the counties with low death and case counts. Model 3 does not explicitly model mortality rate - rather, its parameter county level parameter, $\vec{\theta}$, is associated with both mortality and infection rates. In exploratory data analysis, we saw tension between mortality and infection rates vs population. Model 3 fits a very low estimates of $\theta_i$ to the largest counties, as seen in Figure \ref{m3paramstrace2}. Model 2 and Model 3 generally disagree on the mortality rate across counties.
+
+Each model in this analysis has its own advantages and disadvantages. Model 1 has a nice, conjugate structure and the parameter $\vec{\lambda}$ it is estimating is easily interpreted as the infection rate for each county. Furthermore, calibrating the hyper-parameters allow us to incorporate domain expertise into the model. However, Model 1 clearly underestimates the number of cases statewide, and it may not be flexible enough to capture the extreme heterogeneity across California's counties.
+
+Model 2 estimates the death rate for each county, so it cannot be directly compared to Model 1. Model 2 is not structured to model the infection rate across each county, or even across the state - that is a major shortcoming of this model. To predict the number of deaths from this model, we need to make some assumptions about the number of infections, and these assumptions may be unreliable.
+
+Model 3 is the most ambitious of the three models, and perhaps the most flawed. It is the only model we investigate that models both the number of cases and the number of deaths. Accordingly, we do not need to make broad assumptions about the umber of cases (as we did with model 2) to estimate the number of deaths. One advantage to Model 3 is that it fits a baseline infection rate across all counties with $\lambda$ and then estimates each counties $\theta_i$ a hybrid of the difference from baseline infection rate, and the mortality rate. This is a good idea, however, it is not clear that these two rates should be fitted with a single parameter. Accordingly, the inference from Model 3 is a little wonky. Its posterior expected number of cases and deaths in California has already been eclipsed by reality, which severely reduces my confidence in the Model 3's conclusions. 
+
+
+\subsection{Further Research}
+
+This analysis sparked many ideas for future research. The number of cases detected in each county is obviously determined in part by the availability of testing. It would be very interesting to include number of tests administered in each county as a covariate. It might even be negligent to not include that variable, given its importance. It is also worthwhile to investigate more models that estimated both the number of cases and the number of deaths. If done correctly, such a model could capture the heterogeneity across the state, in terms of infection and mortality rate.
+
+\subsection{Reproducing this Analysis}
+
+The code for this analysis can be found in my Github repository at \url{https://github.com/jberninger/UCSC_Stat207_Midterm/}
+
+%Note:BibTeX also works
+
+\begin{references}
+\itemsep=0pt
+{\footnotesize
+
+\item
+Gelman, Andrew, et al. ``Bayesian Data Analysis.'' 3rd ed., CRC Press, Taylor & Francis Group, an Informa Business, 2014.
+
+\item
+
+Albert, Jim. ``Bayesian Computation with R.'' Springer New York, 2009.
+
+}
+
+\end{references}
+
+
+\end{document}
+
+
